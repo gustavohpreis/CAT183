@@ -1,0 +1,201 @@
+%% CAT183 - TEORIA DE CONTROLE II | LISTA DE EXERCÍCIOS #1
+% Análise do Comportamento Numérico e Estabilidade dos Métodos de Euler
+% Sistema Massa-Mola-Amortecedor em Tempo Discreto
+%
+% Autor: [O Seu Nome]
+% Instituição: Universidade Federal de Ouro Preto (UFOP) - DECAT
+
+clear; clc; close all;
+
+%% 1. PARÂMETROS DO SISTEMA E DO AMBIENTE DE SIMULAÇÃO
+% Parâmetros físicos do sistema mecânico contínuo
+M = 2.0;          % Massa [kg]
+B = 0.8;          % Coeficiente de amortecimento viscoso [N.s/m]
+K = 5.0;          % Constante elástica da mola [N/m]
+
+% Condições iniciais e tempo total
+y0 = 1.0;         % Posição inicial [m]
+v0 = 0.0;         % Velocidade inicial [m/s]
+tf = 15.0;        % Tempo total de simulação [s]
+
+% Períodos de amostragem em análise
+Ts_vetor = [0.01, 0.10, 0.50];
+
+% Propriedades dinâmicas do sistema contínuo (Análise Teórica)
+a = B / M;                         % Termo de amortecimento específico
+b = K / M;                         % Termo de rigidez específico
+wn = sqrt(K / M);                  % Frequência natural não amortecida [rad/s]
+zeta = B / (2 * sqrt(K * M));      % Fator de amortecimento relativo
+sigma = B / (2 * M);               % Taxa de decaimento exponencial (parte real)
+wd = wn * sqrt(1 - zeta^2);        % Frequência natural amortecida [rad/s]
+
+% Limites teóricos de estabilidade
+T_limite_2_wn = 2 / wn;            % Limite genérico de 1ª ordem (1.2649 s)
+T_limite_exato = B / K;            % Limite exato do Euler Explícito de 2ª ordem (0.1600 s)
+
+fprintf('========================================================================\n');
+fprintf('                PROPRIEDADES DO SISTEMA CONTÍNUO                        \n');
+fprintf('========================================================================\n');
+fprintf(' Frequência Natural (wn)      : %.4f rad/s\n', wn);
+fprintf(' Fator de Amortecimento (zeta): %.4f (Subamortecido)\n', zeta);
+fprintf(' Frequência Amortecida (wd)   : %.4f rad/s\n', wd);
+fprintf(' Limite Teórico (2/wn)        : %.4f s\n', T_limite_2_wn);
+fprintf(' Limite Exato (B/K)           : %.4f s\n', T_limite_exato);
+fprintf('========================================================================\n\n');
+
+%% 2. SOLUÇÃO DE REFERÊNCIA (CONTÍNUA)
+% (a) Solução Numérica de Alta Precisão via ode45
+f_estado = @(t, x) [x(2); -a*x(2) - b*x(1)];
+opcoes_ode = odeset('RelTol', 1e-10, 'AbsTol', 1e-12);
+[t_ref, x_ref] = ode45(f_estado, [0, tf], [y0; v0], opcoes_ode);
+
+% (b) Solução Analítica Exata (Resposta Livre Subamortecida)
+y_analitica = @(t) exp(-sigma*t) .* (y0 * cos(wd*t) + ((v0 + sigma*y0)/wd) * sin(wd*t));
+
+% Verificação de consistência entre a referência numérica e a analítica
+erro_ref = max(abs(x_ref(:,1) - y_analitica(t_ref)));
+fprintf('Consistência das Referências: Max |ode45 - Analítica| = %.2e\n\n', erro_ref);
+
+%% 3. SIMULAÇÃO E COMPARAÇÃO DOS MÉTODOS DE DISCRETIZAÇÃO
+fprintf('========================================================================\n');
+fprintf('        ANÁLISE DE DESEMPENHO E ERRO DOS MÉTODOS DISCRETOS              \n');
+fprintf('========================================================================\n');
+fprintf('  T (s)    Método       Erro Máx (m)   Erro RMS (m)   Amplitude Máx (m) \n');
+fprintf('------------------------------------------------------------------------\n');
+
+% Configuração da figura para os gráficos das respostas temporais
+fig_sim = figure('Name', 'Respostas Temporais - Euler Explícito vs Implícito', ...
+                 'Position', [100, 100, 1100, 800]);
+t_continua_plot = linspace(0, tf, 2000); % Vetor suave para plotagem de referência
+
+for i = 1:length(Ts_vetor)
+    T = Ts_vetor(i);
+    N = round(tf / T);
+    t_disc = (0:N) * T;
+    
+    % --- Método de Euler Explícito (Forward Difference) ---
+    y_exp = zeros(1, N + 1);
+    y_exp(1) = y0;
+    y_exp(2) = y0 + T * v0; % Condição inicial do segundo passo
+    
+    for j = 1:(N - 1)
+        y_exp(j+2) = (2 - a*T)*y_exp(j+1) + (-1 + a*T - b*T^2)*y_exp(j);
+    end
+    
+    % --- Método de Euler Implícito (Backward Difference) ---
+    y_imp = zeros(1, N + 1);
+    y_imp(1) = y0;
+    ym1 = y0 - T * v0;      % Aproximação virtual para y[-1]
+    den = M + B*T + K*T^2;
+    
+    y_imp(2) = ((2*M + B*T)*y_imp(1) - M*ym1) / den;
+    for j = 3:(N + 1)
+        y_imp(j) = ((2*M + B*T)*y_imp(j-1) - M*y_imp(j-2)) / den;
+    end
+    
+    % --- Cálculo dos Erros numéricos em relação à solução analítica ---
+    erro_exp = y_exp - y_analitica(t_disc);
+    erro_imp = y_imp - y_analitica(t_disc);
+    
+    fprintf('  %4.2f    Explícito    %11.4e    %11.4e    %12.3f\n', ...
+            T, max(abs(erro_exp)), sqrt(mean(erro_exp.^2)), max(abs(y_exp)));
+    fprintf('  %4.2f    Implícito    %11.4e    %11.4e    %12.3f\n', ...
+            T, max(abs(erro_imp)), sqrt(mean(erro_imp.^2)), max(abs(y_imp)));
+    fprintf('------------------------------------------------------------------------\n');
+    
+    % --- Plotagem: Euler Explícito ---
+    subplot(3, 2, 2*i - 1);
+    plot(t_continua_plot, y_analitica(t_continua_plot), 'k', 'LineWidth', 1.5); hold on;
+    plot(t_disc, y_exp, 'r.-', 'MarkerSize', 8); grid on;
+    title(sprintf('Euler Explícito - T = %.2f s', T), 'FontSize', 10, 'FontWeight', 'bold');
+    xlabel('t (s)'); ylabel('y (m)');
+    legend('Referência (Analítica)', 'Euler Explícito', 'Location', 'northeast');
+    if T == 0.50
+        ylim([-5, 5]); % Limita escala visual para a divergência
+    end
+    
+    % --- Plotagem: Euler Implícito ---
+    subplot(3, 2, 2*i);
+    plot(t_continua_plot, y_analitica(t_continua_plot), 'k', 'LineWidth', 1.5); hold on;
+    plot(t_disc, y_imp, 'r.-', 'MarkerSize', 8); grid on;
+    title(sprintf('Euler Implícito - T = %.2f s', T), 'FontSize', 10, 'FontWeight', 'bold');
+    xlabel('t (s)'); ylabel('y (m)');
+    legend('Referência (Analítica)', 'Euler Implícito', 'Location', 'northeast');
+end
+
+%% 4. ANÁLISE DE ESTABILIDADE NO PLANO Z E RAIO ESPECTRAL
+fprintf('\n========================================================================\n');
+fprintf('           ANÁLISE DE ESTABILIDADE (POLOS E MAIOR MAGNITUDE |z|)         \n');
+fprintf('========================================================================\n');
+
+for i = 1:length(Ts_vetor)
+    T = Ts_vetor(i);
+    
+    % Polinómios característicos P(z)
+    pol_exp = [1, -(2 - a*T), (1 - a*T + b*T^2)];
+    pol_imp = [(1 + a*T + b*T^2), -(2 + a*T), 1];
+    
+    z_exp = roots(pol_exp);
+    z_imp = roots(pol_imp);
+    
+    fprintf('T = %.2f s | Explícito |z| = %.4f | Implícito |z| = %.4f | Exato |z| = %.4f\n', ...
+            T, max(abs(z_exp)), max(abs(z_imp)), exp(-sigma*T));
+end
+
+% Varredura contínua do período de amostragem (T) para curva de estabilidade
+T_varredura = linspace(0.005, 1.5, 400);
+rho_explicit = zeros(size(T_varredura));
+rho_implicit = zeros(size(T_varredura));
+
+for n = 1:length(T_varredura)
+    T_aux = T_varredura(n);
+    rho_explicit(n) = max(abs(roots([1, -(2 - a*T_aux), (1 - a*T_aux + b*T_aux^2)])));
+    rho_implicit(n) = max(abs(roots([(1 + a*T_aux + b*T_aux^2), -(2 + a*T_aux), 1])));
+end
+
+% Gráfico da trajetória do Raio Espectral |z| max em função de T
+figure('Name', 'Análise do Raio Espectral e Limite de Estabilidade', 'Position', [150, 150, 800, 500]);
+plot(T_varredura, rho_explicit, 'r', 'LineWidth', 1.8); hold on;
+plot(T_varredura, rho_implicit, 'b', 'LineWidth', 1.8);
+plot([0, 1.5], [1, 1], 'k--', 'LineWidth', 1.2);
+plot([T_limite_exato, T_limite_exato], [0, 2.5], 'm:', 'LineWidth', 1.5);
+plot([T_limite_2_wn, T_limite_2_wn], [0, 2.5], 'g:', 'LineWidth', 1.5);
+
+ylim([0, 2.5]); grid on;
+title('Raio Espectral \rho(z) em Função do Período de Amostragem T', 'FontSize', 11);
+xlabel('Período de Amostragem T (s)'); ylabel('Maior Magnitude de Polo |z|_{máx}');
+legend('Euler Explícito', 'Euler Implícito', 'Limiar de Estabilidade (|z| = 1)', ...
+       sprintf('Limite Exato B/K = %.2f s', T_limite_exato), ...
+       sprintf('Limite Aproximado 2/\\omega_n = %.2f s', T_limite_2_wn), ...
+       'Location', 'northwest');
+
+%% 5. TESTE EMPÍRICO NO ENTORNO DO LIMIAR CRÍTICO DE ESTABILIDADE
+fprintf('\n========================================================================\n');
+fprintf('        TESTE DE VALIDAÇÃO DO LIMITE DE ESTABILIDADE (EULER EXPLÍCITO)  \n');
+fprintf('========================================================================\n');
+fprintf(' Testando valores de T próximos ao limite crítico de B/K = 0.160 s:\n\n');
+
+testes_T = [0.10, 0.15, 0.159, 0.161, 0.17, 0.20, 0.50];
+for T_teste = testes_T
+    N_t = round(tf / T_teste);
+    t_t = (0:N_t) * T_teste;
+    ye_t = zeros(1, N_t + 1);
+    ye_t(1) = y0; ye_t(2) = y0 + T_teste * v0;
+    
+    for j = 1:(N_t - 1)
+        ye_t(j+2) = (2 - a*T_teste)*ye_t(j+1) + (-1 + a*T_teste - b*T_teste^2)*ye_t(j);
+    end
+    
+    % Amplitude máxima observada no trecho final da simulação (últimos 3 segundos)
+    amp_final = max(abs(ye_t(t_t > (tf - 3))));
+    
+    if T_teste < T_limite_exato
+        status = 'ESTÁVEL';
+    else
+        status = 'INSTÁVEL (Divergente)';
+    end
+    
+    fprintf('  T = %5.3f s  |  Amp. Final (t > 12s): %10.3e  |  Comportamento: %s\n', ...
+            T_teste, amp_final, status);
+end
+fprintf('========================================================================\n');
